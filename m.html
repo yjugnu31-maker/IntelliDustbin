@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Model - Intelli Dustbin</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+            background-color: #111827;
+            color: #f3f4f6;
+            overflow: hidden; /* Prevent scrollbars from appearing */
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        .panel {
+            position: absolute;
+            background-color: rgba(31, 41, 55, 0.85);
+            backdrop-filter: blur(5px);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            border: 1px solid rgba(75, 85, 99, 0.5);
+        }
+        #info-panel {
+            top: 20px;
+            left: 20px;
+            max-width: 350px;
+        }
+        #gemini-panel {
+            top: 250px;
+            left: 20px;
+            max-width: 350px;
+        }
+        #controls-panel {
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 0.75rem;
+        }
+        button {
+            background-color: #3b82f6;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background-color 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        button:hover {
+            background-color: #2563eb;
+        }
+        button:disabled {
+            background-color: #4b5563;
+            cursor: not-allowed;
+        }
+        button.active {
+            background-color: #1d4ed8;
+        }
+        input[type="text"] {
+            background-color: #374151;
+            border: 1px solid #4b5563;
+            color: white;
+            border-radius: 0.375rem;
+            padding: 0.5rem;
+            width: 100%;
+        }
+        #gemini-response {
+            margin-top: 1rem;
+            padding: 0.75rem;
+            background-color: rgba(17, 24, 39, 0.5);
+            border-radius: 0.375rem;
+            min-height: 50px;
+        }
+        .loader {
+            width: 16px;
+            height: 16px;
+            border: 2px solid #fff;
+            border-bottom-color: transparent;
+            border-radius: 50%;
+            display: inline-block;
+            box-sizing: border-box;
+            animation: rotation 1s linear infinite;
+        }
+        @keyframes rotation {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="container">
+        <div id="controls-panel" class="panel">
+            <button id="toggle-internals">Show Internals</button>
+            <button id="toggle-lid">Open Lid</button>
+            <button id="toggle-chambers">Eject Chambers</button>
+            <button id="reset-view">Reset View</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { TWEEN } from 'three/addons/libs/tween.module.min.js';
+
+        let scene, camera, renderer, controls;
+        let shellGroup, shellHalf1, shellHalf2, lidGroup, tray, chamber1, chamber2, chamber3, chamber4, chamberGroup;
+        let isInternalsVisible = false;
+        let isLidOpen = false;
+        let areChambersEjected = false;
+
+        // --- Basic Scene Setup ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111827);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(2, 3, 4);
+            camera.lookAt(0, 1, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 10, 7.5);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+            const groundGeo = new THREE.PlaneGeometry(20, 20);
+            const groundMat = new THREE.MeshStandardMaterial({ color: 0x1f2937, roughness: 0.8 });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+            const steelMaterial = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.9, roughness: 0.2, side: THREE.DoubleSide });
+            const hdpeMaterials = {
+                plastic: new THREE.MeshStandardMaterial({ color: 0x3b82f6, roughness: 0.7, name: 'plastic' }),
+                organic: new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.7, name: 'organic' }),
+                metal: new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.7, name: 'metal' }),
+                other: new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.7, name: 'other' })
+            };
+            const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.5 });
+            
+            // --- Build Dustbin ---
+            const dustbinHeight = 2.4;
+            const dustbinRadius = 0.8;
+            
+            // --- Splitting Outer Shell ---
+            shellGroup = new THREE.Group();
+            shellGroup.position.y = dustbinHeight / 2;
+            scene.add(shellGroup);
+
+            const shellHalfGeo = new THREE.CylinderGeometry(dustbinRadius, dustbinRadius, dustbinHeight, 64, 1, true, -Math.PI / 2, Math.PI);
+            shellHalf1 = new THREE.Mesh(shellHalfGeo, steelMaterial);
+            shellHalf1.castShadow = true;
+            shellGroup.add(shellHalf1);
+
+            shellHalf2 = new THREE.Mesh(shellHalfGeo, steelMaterial);
+            shellHalf2.rotation.y = Math.PI;
+            shellHalf2.castShadow = true;
+            shellGroup.add(shellHalf2);
+
+            const baseGeo = new THREE.CircleGeometry(dustbinRadius, 64);
+            const base = new THREE.Mesh(baseGeo, steelMaterial);
+            base.rotation.x = -Math.PI / 2;
+            base.position.y = -dustbinHeight / 2 + 0.01;
+            shellGroup.add(base);
+
+
+            const innerChamberHeight = dustbinHeight * 0.95;
+            const innerRadius = dustbinRadius * 0.95;
+            chamberGroup = new THREE.Group(); // Make chamberGroup a global variable
+            const chamberAngle = Math.PI / 2; // Angle for 4 chambers
+            const chamberGeo = new THREE.CylinderGeometry(innerRadius, innerRadius, innerChamberHeight, 32, 1, false, 0, chamberAngle - 0.05);
+            chamber1 = new THREE.Mesh(chamberGeo, hdpeMaterials.plastic);
+            chamber2 = new THREE.Mesh(chamberGeo, hdpeMaterials.organic);
+            chamber3 = new THREE.Mesh(chamberGeo, hdpeMaterials.metal);
+            chamber4 = new THREE.Mesh(chamberGeo, hdpeMaterials.other);
+            chamber2.rotation.y = chamberAngle;
+            chamber3.rotation.y = chamberAngle * 2;
+            chamber4.rotation.y = chamberAngle * 3;
+            chamberGroup.add(chamber1, chamber2, chamber3, chamber4);
+            chamberGroup.position.y = innerChamberHeight / 2 + (dustbinHeight - innerChamberHeight);
+            scene.add(chamberGroup);
+
+            // --- NEW Lid, Dome, and Tilting Tray ---
+            lidGroup = new THREE.Group();
+            lidGroup.position.y = dustbinHeight;
+            scene.add(lidGroup);
+
+            // 1. Dome Structure
+            const domeRadius = dustbinRadius * 1.05;
+            const domeGeo = new THREE.SphereGeometry(domeRadius, 64, 32, 0, Math.PI * 2, 0, Math.PI / 2.5);
+            const dome = new THREE.Mesh(domeGeo, steelMaterial);
+            lidGroup.add(dome);
+
+            // 2. Chute/Hole on top - Made Bigger
+            const chuteRadius = dustbinRadius * 0.6; // Increased from 0.4
+            const chuteGeo = new THREE.CylinderGeometry(chuteRadius, chuteRadius, 0.3, 64, 1, true);
+            const chute = new THREE.Mesh(chuteGeo, steelMaterial);
+            chute.position.y = domeRadius * 0.75; // Adjusted position slightly
+            lidGroup.add(chute);
+            
+            // 3. Tilting Tray (inside a pivot group for rotation)
+            const trayPivot = new THREE.Group();
+            lidGroup.add(trayPivot);
+            const trayGeo = new THREE.CylinderGeometry(dustbinRadius * 0.9, dustbinRadius * 0.9, 0.05, 64);
+            tray = new THREE.Mesh(trayGeo, darkMaterial);
+            trayPivot.add(tray); // Add tray to the pivot
+            
+            // 4. Internal Camera
+            const cameraBoxGeo = new THREE.BoxGeometry(0.3, 0.2, 0.3);
+            const cameraBox = new THREE.Mesh(cameraBoxGeo, darkMaterial);
+            cameraBox.position.y = domeRadius * 0.6; // Position inside the dome
+            lidGroup.add(cameraBox);
+            const lensGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.05, 32);
+            const lens = new THREE.Mesh(lensGeo, new THREE.MeshStandardMaterial({color: 0x2563eb}));
+            lens.position.y = -0.1;
+            lens.rotation.x = Math.PI / 2;
+            cameraBox.add(lens);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, dustbinHeight / 2, 0);
+            controls.enableDamping = true;
+            controls.minDistance = 2;
+            controls.maxDistance = 15;
+            
+            window.addEventListener('resize', onWindowResize, false);
+            document.getElementById('toggle-internals').addEventListener('click', toggleInternals);
+            document.getElementById('toggle-lid').addEventListener('click', toggleLid);
+            document.getElementById('toggle-chambers').addEventListener('click', toggleChambers);
+            document.getElementById('reset-view').addEventListener('click', resetView);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        function toggleInternals(event) {
+            isInternalsVisible = !isInternalsVisible;
+            const button = event.target;
+            button.textContent = isInternalsVisible ? 'Hide Internals' : 'Show Internals';
+            button.classList.toggle('active', isInternalsVisible);
+            [shellHalf1, shellHalf2].forEach(half => {
+                new TWEEN.Tween(half.material).to({ opacity: isInternalsVisible ? 0.2 : 1.0 }, 500).onStart(() => { half.material.transparent = true; }).onComplete(() => { if (!isInternalsVisible) half.material.transparent = false; }).easing(TWEEN.Easing.Quadratic.Out).start();
+            });
+        }
+
+        function toggleLid(event) {
+            isLidOpen = !isLidOpen;
+            const button = event.target;
+            button.textContent = isLidOpen ? 'Close Lid' : 'Open Lid';
+            button.classList.toggle('active', isLidOpen);
+            const targetY = isLidOpen ? 3.4 : 2.4;
+            new TWEEN.Tween(lidGroup.position).to({ y: targetY }, 700).easing(TWEEN.Easing.Exponential.Out).start();
+        }
+
+        function resetView() {
+            new TWEEN.Tween(camera.position).to({ x: 2, y: 3, z: 4 }, 800).easing(TWEEN.Easing.Quadratic.Out).start();
+            new TWEEN.Tween(controls.target).to({ x: 0, y: 2.4/2, z: 0 }, 800).easing(TWEEN.Easing.Quadratic.Out).start();
+            if(isInternalsVisible) document.getElementById('toggle-internals').click();
+            if(isLidOpen) document.getElementById('toggle-lid').click();
+            if(areChambersEjected) document.getElementById('toggle-chambers').click();
+            // Reset tray tilt if needed
+            new TWEEN.Tween(tray.parent.rotation).to({x:0, y:0, z:0}, 300).easing(TWEEN.Easing.Quadratic.Out).start();
+        }
+
+        function toggleChambers(event) {
+            areChambersEjected = !areChambersEjected;
+            const button = event.target;
+            button.textContent = areChambersEjected ? 'Retract Chambers' : 'Eject Chambers';
+            button.classList.toggle('active', areChambersEjected);
+            
+            const shellOpenDistance = 0.15;
+            const chamberEjectDistance = 0.8;
+            const originPos = new THREE.Vector3(0, 0, 0);
+
+            // When retracting, chambers move first, then shell closes
+            const chamberDelay = areChambersEjected ? 200 : 0;
+            const shellDelay = areChambersEjected ? 0 : 200;
+
+            // Animate the outer shell halves to open/close
+            new TWEEN.Tween(shellHalf1.position)
+                .to({ x: areChambersEjected ? -shellOpenDistance : 0 }, 600)
+                .delay(shellDelay)
+                .easing(TWEEN.Easing.Exponential.Out).start();
+            new TWEEN.Tween(shellHalf2.position)
+                .to({ x: areChambersEjected ? shellOpenDistance : 0 }, 600)
+                .delay(shellDelay)
+                .easing(TWEEN.Easing.Exponential.Out).start();
+
+            // Calculate target positions for radial ejection
+            const chamberAngle = Math.PI / 2;
+            const midAngle1 = (chamberAngle - 0.05) / 2;
+            const midAngle2 = midAngle1 + chamberAngle;
+            const midAngle3 = midAngle1 + chamberAngle * 2;
+            const midAngle4 = midAngle1 + chamberAngle * 3;
+
+            const targetPos1 = new THREE.Vector3(chamberEjectDistance * Math.cos(midAngle1), 0, -chamberEjectDistance * Math.sin(midAngle1));
+            const targetPos2 = new THREE.Vector3(chamberEjectDistance * Math.cos(midAngle2), 0, -chamberEjectDistance * Math.sin(midAngle2));
+            const targetPos3 = new THREE.Vector3(chamberEjectDistance * Math.cos(midAngle3), 0, -chamberEjectDistance * Math.sin(midAngle3));
+            const targetPos4 = new THREE.Vector3(chamberEjectDistance * Math.cos(midAngle4), 0, -chamberEjectDistance * Math.sin(midAngle4));
+            
+            // Animate the inner chambers
+             new TWEEN.Tween(chamber1.position)
+                .to(areChambersEjected ? targetPos1 : originPos, 800)
+                .delay(chamberDelay)
+                .easing(TWEEN.Easing.Exponential.Out).start();
+             new TWEEN.Tween(chamber2.position)
+                .to(areChambersEjected ? targetPos2 : originPos, 800)
+                .delay(chamberDelay)
+                .easing(TWEEN.Easing.Exponential.Out).start();
+             new TWEEN.Tween(chamber3.position)
+                .to(areChambersEjected ? targetPos3 : originPos, 800)
+                .delay(chamberDelay)
+                .easing(TWEEN.Easing.Exponential.Out).start();
+             new TWEEN.Tween(chamber4.position)
+                .to(areChambersEjected ? targetPos4 : originPos, 800)
+                .delay(chamberDelay)
+                .easing(TWEEN.Easing.Exponential.Out).start();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            TWEEN.update();
+            renderer.render(scene, camera);
+        }
+
+        init();
+        animate();
+    </script>
+</body>
+</html>
